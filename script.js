@@ -8,10 +8,10 @@ var f;
       console.error("パスワードは空にできません。");
       return null;
     }
-  
+
     let decryptedResult = '';
     let cumulativeChecksum = 0;
-  
+
     for (let i = 0; i < cipherText.length; i++) {
       const encryptedCharCode = cipherText.charCodeAt(i);
       const passwordCharCode = password.charCodeAt(i % password.length);
@@ -21,8 +21,8 @@ var f;
     }
     return decryptedResult;
   }
-  
-  
+
+
 
   function decrypt(base64CipherText, password) {
     try {
@@ -37,7 +37,7 @@ var f;
 document.addEventListener('DOMContentLoaded', () => {
     // ★★★ ここに正しいパスワードを設定してください ★★★
     const correctPassword = "YOUR_SECRET_PASSWORD";
-    // ★★★ ★★★ ★★★ ★★★ ★★★ ★★★ ★★★
+    // ★★★ (Replace "YOUR_SECRET_PASSWORD" with the actual password) ★★★
 
     const passwordModal = document.getElementById('passwordModal');
     const passwordInput = document.getElementById('passwordInput');
@@ -118,6 +118,12 @@ async function asyncGetValue(key){
     return (await readLineN(file,line)).split(" ")[1];
 }
 async function asyncGetValues(keys) {
+    // Handle potential null or empty keys gracefully
+    if (!keys || keys.length === 0) {
+        return [];
+    }
+    // Filter out any invalid keys before mapping
+    keys = keys.filter(key => typeof key === 'string' && key.length === 6);
     const promises=keys.map(key=>asyncGetValue(key));
     const res = await Promise.all(promises);
     return res;
@@ -142,6 +148,7 @@ const textBottomInput = document.getElementById('textBottom');
 const displayArea = document.getElementById('displayArea'); // Added
 const settingsPanel = document.getElementById('settingsPanel'); // Added (needed for padding calc)
 const qrTabInstructionDiv = document.getElementById('qrTabInstruction');
+const randomButton = document.getElementById('randomButton'); // Added Random Button
 
 // --- Color Options & Initialization ---
 const colorOptions = { "赤": "#ec413a", "青": "#384bea", "黄": "#eeec44", "橙": "#e16223", "緑": "#7bde3a", "水色": "#35d0e0", "白": "#fcfcdf", "紫": "#9e6cf0", "黒": "#474747" };
@@ -342,6 +349,151 @@ function adjustDisplayAreaPadding() {
     }
 }
 
+
+// --- UI Reset Function (Common) ---
+function resetUI() {
+    statusDiv.textContent = '待機中...'; statusDiv.style.backgroundColor = '#e9ecef';
+    loadingDiv.style.display = 'none';
+    errorDiv.style.display = 'none'; errorDiv.textContent = '';
+    sourceImage.src = '#'; sourceImage.classList.remove('loaded'); sourceImageContainer.style.display = 'flex'; // Show container but no image initially
+    qrResultDiv.style.display = 'none'; qrResultDiv.textContent = '';
+    qrCodeContainer.style.display = 'none';
+    if(tabNav) tabNav.innerHTML = '';
+    if(tabContentContainer) tabContentContainer.innerHTML = '';
+    if (qrTabInstructionDiv) {
+        qrTabInstructionDiv.style.display = 'none';
+        qrTabInstructionDiv.textContent = '';
+    }
+    // Don't reset the file input value here, only clear visual feedback
+}
+
+// --- Error Display Function ---
+function displayError(message, statusText = 'エラー') {
+    statusDiv.textContent = statusText; statusDiv.style.backgroundColor = '#f8d7da';
+    errorDiv.textContent = message; errorDiv.style.display = 'block';
+    loadingDiv.style.display = 'none';
+    qrCodeContainer.style.display = 'none'; // Ensure QR area is hidden on error
+    adjustDisplayAreaPadding(); // Adjust padding after hiding QR area
+}
+
+// --- QR Code Generation and Display Logic (Common Function) ---
+function generateSingleQRCodeTab(qrText, tabIndex, tabLabel, originalKey = null) {
+    if (!tabNav || !tabContentContainer) {
+        console.error("Tab containers not found for generating QR tab.");
+        return false; // Indicate failure
+    }
+
+    const tabIdSuffix = `${Date.now()}_${tabIndex}`;
+    const tabItem = document.createElement('li');
+    tabItem.textContent = tabLabel;
+    tabItem.dataset.index = tabIndex;
+    tabItem.addEventListener('click', () => activateTab(tabIndex));
+    tabNav.appendChild(tabItem);
+
+    const contentDiv = document.createElement('div');
+    contentDiv.classList.add('tab-content');
+    contentDiv.dataset.index = tabIndex;
+
+    const wrapperId = `qrWrapper_${tabIdSuffix}`;
+    const qrWrapper = document.createElement('div');
+    qrWrapper.classList.add('qr-wrapper');
+    qrWrapper.id = wrapperId;
+    // Apply current settings
+    const currentBorderColor = selectedBorderColorInput.value;
+    const currentTextTop = textTopInput.value.trim();
+    const currentTextBottom = textBottomInput.value.trim();
+    qrWrapper.style.setProperty('--current-border-color', currentBorderColor);
+    qrWrapper.style.backgroundColor = currentBorderColor;
+
+    const qrTextTopDiv = document.createElement('div');
+    qrTextTopDiv.classList.add('qr-text', 'qr-text-top');
+    qrTextTopDiv.textContent = currentTextTop;
+
+    const qrCodeItselfDiv = document.createElement('div');
+    qrCodeItselfDiv.classList.add('qr-code-itself');
+    const qrTargetId = `qrCodeTarget_${tabIdSuffix}`;
+    qrCodeItselfDiv.id = qrTargetId;
+
+    const qrTextBottomDiv = document.createElement('div');
+    qrTextBottomDiv.classList.add('qr-text', 'qr-text-bottom');
+    qrTextBottomDiv.textContent = currentTextBottom;
+
+    const actionsDiv = document.createElement('div');
+    actionsDiv.classList.add('qr-actions');
+    const saveButton = document.createElement('button');
+    saveButton.textContent = '画像保存';
+    saveButton.disabled = true; // Disable initially
+    const copyButton = document.createElement('button');
+    copyButton.textContent = '画像コピー';
+    copyButton.disabled = true; // Disable initially
+
+    qrWrapper.appendChild(qrTextTopDiv);
+    qrWrapper.appendChild(qrCodeItselfDiv);
+    qrWrapper.appendChild(qrTextBottomDiv);
+    contentDiv.appendChild(qrWrapper);
+    contentDiv.appendChild(actionsDiv);
+    actionsDiv.appendChild(saveButton);
+    actionsDiv.appendChild(copyButton);
+    tabContentContainer.appendChild(contentDiv);
+
+    let qrGeneratedSuccessfully = false;
+    if (qrText !== null && qrText !== undefined && String(qrText).trim() !== "") {
+        try {
+            // Use setTimeout to ensure the element is in the DOM before QR generation
+            setTimeout(() => {
+                try {
+                    new QRCode(qrTargetId, {
+                        text: String(qrText),
+                        width: 256,
+                        height: 256,
+                        colorDark: "#000000",
+                        colorLight: "#ffffff",
+                        correctLevel: QRCode.CorrectLevel.M
+                    });
+                    qrGeneratedSuccessfully = true;
+
+                    // Double-check canvas exists after generation
+                    const qrCanvas = qrCodeItselfDiv.querySelector('canvas');
+                     if(qrCanvas) {
+                        saveButton.disabled = false;
+                        copyButton.disabled = false;
+                        saveButton.addEventListener('click', () => downloadCombinedImage(qrWrapper, sanitizeFilename(tabLabel), saveButton));
+                        copyButton.addEventListener('click', () => copyCombinedImage(qrWrapper, copyButton));
+                    } else {
+                        console.error("QR Canvas not found after generation for index", tabIndex);
+                        qrCodeItselfDiv.innerHTML = `<p><strong>表示エラー</strong><br>(Canvas生成失敗)</p>`;
+                        saveButton.title = "QR Canvas生成エラー"; copyButton.title = "QR Canvas生成エラー";
+                        saveButton.disabled = true; copyButton.disabled = true;
+                    }
+                } catch (innerQrError) {
+                     console.error(`Inner QR Gen Error ${tabIndex}:`, innerQrError);
+                    qrCodeItselfDiv.innerHTML = `<p><strong>QR生成エラー</strong><br>(${innerQrError.message})</p>`;
+                    saveButton.title = "QR生成エラーのため無効"; copyButton.title = "QR生成エラーのため無効";
+                }
+            }, 50); // Small delay
+        } catch(qrError) {
+            console.error(`Outer QR Gen Error ${tabIndex}:`, qrError);
+            qrCodeItselfDiv.innerHTML = `<p><strong>QR生成準備エラー</strong><br>(${qrError.message})</p>`;
+            saveButton.title = "QR生成エラーのため無効"; copyButton.title = "QR生成エラーのため無効";
+        }
+    } else {
+        let errMsg = 'データ未取得';
+        if(originalKey) {
+            errMsg += `<br>(Key: <code>${originalKey}</code>)`;
+        } else {
+            errMsg += '<br>(データが空です)';
+        }
+        qrCodeItselfDiv.innerHTML = `<p>${errMsg}</p>`;
+        qrWrapper.style.backgroundColor = '#FFA500'; // Indicate issue
+        qrWrapper.style.setProperty('--current-border-color', '#FFA500');
+        saveButton.title = "データ未取得/空のため無効"; copyButton.title = "データ未取得/空のため無効";
+    }
+    // Return value indicates if QR generation was *attempted* successfully,
+    // not necessarily if the QR itself rendered correctly.
+    return true; // Tab structure added successfully
+}
+
+
 // --- Resize event handling with debounce (Added) ---
 let resizeTimer;
 window.addEventListener('resize', () => {
@@ -351,31 +503,24 @@ window.addEventListener('resize', () => {
     }, 150); // Adjust after resize stops for 150ms
 });
 
-// --- Main Event Listener ---
+// --- Image Upload Event Listener ---
 imageUpload.addEventListener('change', (event) => {
     const file = event.target.files[0];
-
-    if (!file) { statusDiv.textContent = '画像を選択してください。'; return; }
-    if (!file.type.startsWith('image/')) {
-        statusDiv.textContent = '画像ファイルを選択してください。'; statusDiv.style.backgroundColor = '#f8d7da';
-        errorDiv.textContent = '選択されたファイルは画像ではありません。'; errorDiv.style.display = 'block';
+    if (!file) {
+        // If user cancels file selection, just reset subtly
+        resetUI();
+        statusDiv.textContent = 'ファイル選択がキャンセルされました。';
         return;
     }
 
-    // --- Reset UI ---
-    statusDiv.textContent = '画像を読み込み中...'; statusDiv.style.backgroundColor = '#e9ecef';
-    loadingDiv.style.display = 'none'; errorDiv.style.display = 'none'; errorDiv.textContent = '';
-    sourceImage.src = '#'; sourceImage.classList.remove('loaded'); sourceImageContainer.style.display = 'flex';
-    qrResultDiv.style.display = 'none'; // Ensure hidden
-    qrResultDiv.textContent = '';
-    qrCodeContainer.style.display = 'none';
-    if(tabNav) tabNav.innerHTML = '';
-    if(tabContentContainer) tabContentContainer.innerHTML = '';
-    if (qrTabInstructionDiv) { // ★追加: 説明テキストを非表示に
-        qrTabInstructionDiv.style.display = 'none';
-        qrTabInstructionDiv.textContent = '';
+    resetUI(); // Reset UI for the new file
+
+    if (!file.type.startsWith('image/')) {
+        displayError('選択されたファイルは画像ではありません。', 'ファイル形式エラー');
+        return;
     }
-    adjustDisplayAreaPadding(); // Reset padding on new file selection
+
+    statusDiv.textContent = '画像を読み込み中...';
 
     const reader = new FileReader();
     const img = new Image();
@@ -401,11 +546,11 @@ imageUpload.addEventListener('change', (event) => {
                 statusDiv.textContent = 'QR検出！データ処理中...'; statusDiv.style.backgroundColor = '#d1ecf1';
                 // qrResultDiv.textContent = qrData; // Content set, but not displayed
                 // qrResultDiv.style.display = 'block'; // <<< REMOVED >>>
+                loadingDiv.style.display = 'block'; // Show loading while fetching data
 
                 const encodedData = new TextEncoder().encode(qrData);
                 const keys = await f(encodedData);
-
-                if (!keys || keys.length === 0) {
+                if (!keys || !Array.isArray(keys) || keys.length === 0) {
                     statusDiv.textContent = '完了: 生成キーなし'; statusDiv.style.backgroundColor = '#e9ecef';
                     qrCodeContainer.style.display = 'none';
                     adjustDisplayAreaPadding(); // Adjust padding as QR container is hidden
@@ -414,119 +559,100 @@ imageUpload.addEventListener('change', (event) => {
                     statusDiv.textContent = 'データ取得中...';
                     const qrValues = await asyncGetValues(keys);
                     if (qrTabInstructionDiv) {
-                        qrTabInstructionDiv.textContent = '2. 同じ個体が出るQRを選択:'; // テキストを設定
+                        qrTabInstructionDiv.textContent = `2. 同じ個体が出るQRを選択 (${keys.length}個):`; // テキストを設定
                         qrTabInstructionDiv.style.display = 'block';     // 表示
                     }
                     qrCodeContainer.style.display = 'block'; // Display container first
                     statusDiv.textContent = 'QR生成中...';
+                    // Clear previous tabs/content (redundant if resetUI worked, but safe)
                     if(tabNav) tabNav.innerHTML = '';
                     if(tabContentContainer) tabContentContainer.innerHTML = '';
+
                     let generatedCount = 0;
 
-                    const currentBorderColor = selectedBorderColorInput.value;
-                    const currentTextTop = textTopInput.value.trim();
-                    const currentTextBottom = textBottomInput.value.trim();
-
                     qrValues.forEach((qrText, index) => {
-                        const tabIdSuffix = `${Date.now()}_${index}`;
-                        if (!tabNav || !tabContentContainer) return;
-                        const tabItem = document.createElement('li'); tabItem.textContent = `QR ${index + 1}`; tabItem.dataset.index = index; tabItem.addEventListener('click', () => activateTab(index)); tabNav.appendChild(tabItem);
-
-                        const contentDiv = document.createElement('div'); contentDiv.classList.add('tab-content'); contentDiv.dataset.index = index;
-
-                        const wrapperId = `qrWrapper_${tabIdSuffix}`;
-                        const qrWrapper = document.createElement('div');
-                        qrWrapper.classList.add('qr-wrapper');
-                        qrWrapper.id = wrapperId;
-                        qrWrapper.style.setProperty('--current-border-color', currentBorderColor);
-                        qrWrapper.style.backgroundColor = currentBorderColor;
-
-                        const qrTextTopDiv = document.createElement('div'); qrTextTopDiv.classList.add('qr-text', 'qr-text-top'); qrTextTopDiv.textContent = currentTextTop;
-                        const qrCodeItselfDiv = document.createElement('div'); qrCodeItselfDiv.classList.add('qr-code-itself'); const qrTargetId = `qrCodeTarget_${tabIdSuffix}`; qrCodeItselfDiv.id = qrTargetId;
-                        const qrTextBottomDiv = document.createElement('div'); qrTextBottomDiv.classList.add('qr-text', 'qr-text-bottom'); qrTextBottomDiv.textContent = currentTextBottom;
-
-                        const actionsDiv = document.createElement('div'); actionsDiv.classList.add('qr-actions');
-                        const saveButton = document.createElement('button');
-                        saveButton.textContent = '画像保存';
-                        saveButton.disabled = true;
-                        const copyButton = document.createElement('button');
-                        copyButton.textContent = '画像コピー';
-                        copyButton.disabled = true;
-
-                        qrWrapper.appendChild(qrTextTopDiv);
-                        qrWrapper.appendChild(qrCodeItselfDiv);
-                        qrWrapper.appendChild(qrTextBottomDiv);
-                        contentDiv.appendChild(qrWrapper);
-                        contentDiv.appendChild(actionsDiv);
-                        actionsDiv.appendChild(saveButton);
-                        actionsDiv.appendChild(copyButton);
-                        tabContentContainer.appendChild(contentDiv);
-
-                        if (qrText !== null && qrText !== undefined && String(qrText).trim() !== "") {
-                            try {
-                                new QRCode(qrTargetId, { text: String(qrText), width: 256, height: 256, colorDark: "#000000", colorLight: "#ffffff", correctLevel: QRCode.CorrectLevel.M });
-                                generatedCount++;
-
-                                setTimeout(() => { // Delay to ensure canvas is rendered
-                                    const qrCanvas = qrCodeItselfDiv.querySelector('canvas');
-                                    if(qrCanvas) {
-                                        saveButton.disabled = false;
-                                        copyButton.disabled = false;
-                                        saveButton.addEventListener('click', () => downloadCombinedImage(qrWrapper, `QR_${index + 1}`, saveButton));
-                                        copyButton.addEventListener('click', () => copyCombinedImage(qrWrapper, copyButton));
-                                    } else {
-                                        console.error("QR Canvas not found for index", index);
-                                        saveButton.title = "QR Canvas生成エラー"; copyButton.title = "QR Canvas生成エラー"; saveButton.disabled = true; copyButton.disabled = true;
-                                    }
-                                }, 50);
-
-                            } catch(qrError) {
-                                console.error(`QR Gen Error ${index}:`, qrError);
-                                qrCodeItselfDiv.innerHTML = `<p><strong>QR生成エラー</strong><br>(${qrError.message})</p>`;
-                                saveButton.title = "QR生成エラーのため無効"; copyButton.title = "QR生成エラーのため無効";
-                            }
-                        } else {
-                            qrCodeItselfDiv.innerHTML = `<p>データ未取得<br>(Key: <code>${keys[index]||'N/A'}</code>)</p>`;
-                            qrWrapper.style.backgroundColor = '#FFA500'; // Indicate issue
-                            qrWrapper.style.setProperty('--current-border-color', '#FFA500');
-                            saveButton.title = "データ未取得のため無効"; copyButton.title = "データ未取得のため無効";
+                         // Pass the original key for potential error messages
+                        const success = generateSingleQRCodeTab(qrText, index, `QR ${index + 1}`, keys[index]);
+                        if (success && qrText !== null && qrText !== undefined && String(qrText).trim() !== "") {
+                            generatedCount++;
                         }
                     });
 
                     // --- Final UI Update ---
-                    if (generatedCount > 0) {
+                    if (generatedCount > 0 || qrValues.length > 0) { // Show tabs even if generation failed for some
                         activateTab(0);
-                        statusDiv.textContent = `完了: ${generatedCount}個生成`; statusDiv.style.backgroundColor = '#d4edda';
+                        statusDiv.textContent = `完了: ${generatedCount}個生成 (全 ${qrValues.length}個中)`;
+                        statusDiv.style.backgroundColor = generatedCount === qrValues.length ? '#d4edda' : '#fff3cd'; // Green if all succeeded, yellow otherwise
                     } else {
-                        statusDiv.textContent = '完了: 有効データなし'; statusDiv.style.backgroundColor = '#fff3cd';
-                        if (tabNav && tabNav.children.length > 0) activateTab(0); // Activate tab even if no valid data
+                        statusDiv.textContent = '完了: 有効データなし / 全て生成失敗'; statusDiv.style.backgroundColor = '#fff3cd';
+                        qrCodeContainer.style.display = 'none'; // Hide container if nothing generated
                     }
                     // Adjust padding after elements are likely rendered
-                    setTimeout(adjustDisplayAreaPadding, 50);
+                    setTimeout(adjustDisplayAreaPadding, 150); // Slightly longer delay
                 }
             } else {
                 // --- QR Not Found ---
                 statusDiv.textContent = 'QRコード未検出'; statusDiv.style.backgroundColor = '#fff3cd';
-                errorDiv.textContent = '画像からQRコードを検出できませんでした。'; errorDiv.style.display = 'block';
+                displayError('画像からQRコードを検出できませんでした。', 'QR未検出');
                 adjustDisplayAreaPadding(); // Reset padding
             }
         } catch (error) {
             // --- General Error Handling ---
             console.error("[img.onload] Processing Error:", error);
-            statusDiv.textContent = '処理エラー'; statusDiv.style.backgroundColor = '#f8d7da';
-            errorDiv.textContent = `エラー: ${error.message || '不明なエラー'}`; errorDiv.style.display = 'block';
-            adjustDisplayAreaPadding(); // Reset padding on error
+            displayError(`処理エラー: ${error.message || '不明なエラー'}`);
         } finally {
             // --- Cleanup ---
             loadingDiv.style.display = 'none';
         }
     }; // End img.onload
 
-    // --- FileReader Setup ---
-    img.onerror = (event) => { loadingDiv.style.display = 'none'; console.error("[img.onerror] Load failed.", event); statusDiv.textContent = '画像読込失敗'; statusDiv.style.backgroundColor = '#f8d7da'; errorDiv.textContent = '画像ファイル読込失敗'; errorDiv.style.display = 'block'; adjustDisplayAreaPadding(); };
-    reader.onload = (e) => { statusDiv.textContent = '画像を解析中...'; const dataUrl = e.target.result; img.src = dataUrl; sourceImage.src = dataUrl; };
-    reader.onerror = (event) => { console.error("[reader.onerror] FileReader error.", event.target.error); statusDiv.textContent = 'ファイル読込エラー'; statusDiv.style.backgroundColor = '#f8d7da'; errorDiv.textContent = `ファイルリーダーエラー: ${event.target.error.message || '不明'}`; errorDiv.style.display = 'block'; loadingDiv.style.display = 'none'; adjustDisplayAreaPadding(); };
+    // --- FileReader Setup (Error Handling Added) ---
+    img.onerror = (event) => {
+        console.error("[img.onerror] Image load failed.", event);
+        displayError('画像ファイルの読み込みまたはデコードに失敗しました。破損しているか非対応形式の可能性があります。', '画像読込失敗');
+    };
+    reader.onload = (e) => {
+        statusDiv.textContent = '画像を解析中...';
+        const dataUrl = e.target.result;
+        // Set img.src *before* sourceImage.src to potentially catch load errors earlier
+        img.src = dataUrl;
+        sourceImage.src = dataUrl; // Also update the display image
+    };
+    reader.onerror = (event) => {
+        console.error("[reader.onerror] FileReader error.", event.target.error);
+        displayError(`ファイルリーダーエラー: ${event.target.error.message || '不明なエラー'}`, 'ファイル読込エラー');
+    };
 
     // --- Start Reading File ---
     reader.readAsDataURL(file);
 }); // End imageUpload listener
+
+// --- Random Value Generation ---
+function getRandomValue() {
+    // Generates a random integer between 0 and 2^24 - 1 (inclusive)
+    return Math.floor(Math.random() * (2**24));
+}
+
+// --- Random Button Event Listener ---
+randomButton.addEventListener('click', () => {
+    resetUI(); // Reset the UI first
+    sourceImageContainer.style.display = 'none'; // Hide the source image container for random
+    statusDiv.textContent = 'ランダムQR生成中...';
+    qrCodeContainer.style.display = 'block'; // Show the QR code container
+    loadingDiv.style.display = 'block'; // Show loading briefly
+
+    const randomValue = getRandomValue();
+    const randomValueString = String(randomValue); // Convert number to string for QR
+
+    // Generate a single tab with the random value
+    const success = generateSingleQRCodeTab(randomValueString, 0, 'Random QR');
+
+    if (success) {
+        activateTab(0);
+        statusDiv.textContent = `完了: ランダムQR生成 (${randomValue})`; statusDiv.style.backgroundColor = '#d4edda';
+        setTimeout(adjustDisplayAreaPadding, 150); // Adjust padding after rendering
+    } else {
+        displayError('ランダムQRタブの生成に失敗しました。');
+    }
+    loadingDiv.style.display = 'none'; // Hide loading
+});
