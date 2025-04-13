@@ -193,7 +193,10 @@ function scanQRCodeFromImage(imageData) {
     if (!imageData || !imageData.data || !imageData.width || !imageData.height) { console.error("scanQRCodeFromImage: Invalid imageData", imageData); return null; }
     try {
         const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
-        if (code) { return code.data; } else { return null; }
+        // ▼▼▼ 変更箇所 ▼▼▼
+        // 文字列(data)ではなくバイナリデータ(binaryData)を返す
+        if (code) { return code.binaryData; } else { return null; }
+        // ▲▲▲ 変更箇所 ▲▲▲
     } catch (error) {
         console.error("scanQRCodeFromImage: jsQR Error:", error); return null;
     }
@@ -541,15 +544,15 @@ imageUpload.addEventListener('change', (event) => {
 
             qrData = scanQRCodeFromImage(imageData);
 
-            if (qrData) {
+            if (qrData&& qrData.length > 0) {
                 // --- QR Found - Process Data ---
                 statusDiv.textContent = 'QR検出！データ処理中...'; statusDiv.style.backgroundColor = '#d1ecf1';
                 // qrResultDiv.textContent = qrData; // Content set, but not displayed
                 // qrResultDiv.style.display = 'block'; // <<< REMOVED >>>
                 loadingDiv.style.display = 'block'; // Show loading while fetching data
 
-                const encodedData = new TextEncoder().encode(qrData);
-                const keys = await f(encodedData);
+                //const encodedData = new TextEncoder().encode(qrData);
+                const keys = await f(qrData);
                 if (!keys || !Array.isArray(keys) || keys.length === 0) {
                     statusDiv.textContent = '完了: 生成キーなし'; statusDiv.style.backgroundColor = '#e9ecef';
                     qrCodeContainer.style.display = 'none';
